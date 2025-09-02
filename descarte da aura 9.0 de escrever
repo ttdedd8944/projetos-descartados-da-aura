@@ -1,0 +1,175 @@
+import os, sys, json, hashlib, webbrowser, time, threading
+import pyttsx3, speech_recognition as sr
+
+BASE_DIR = "aura_users"
+os.makedirs(BASE_DIR, exist_ok=True)
+
+USERS_FILE = os.path.join(BASE_DIR, "usuarios.json")
+
+# ========== VOZ ==========
+tts = pyttsx3.init()
+tts.setProperty("rate", 170)
+tts.setProperty("volume", 1.0)
+
+def falar(txt):
+    print("Aura:", txt)
+    tts.say(txt)
+    tts.runAndWait()
+
+# ========== RECONHECIMENTO DE VOZ ==========
+recognizer = sr.Recognizer()
+def ouvir():
+    try:
+        with sr.Microphone() as source:
+            recognizer.adjust_for_ambient_noise(source, duration=0.4)
+            print("🎤 Ouvindo...")
+            audio = recognizer.listen(source, timeout=5, phrase_time_limit=6)
+            cmd = recognizer.recognize_google(audio, language="pt-BR")
+            print("Você:", cmd)
+            return cmd.strip().lower()
+    except:
+        return ""
+
+# ========== LOGIN ==========
+def hash_senha(senha: str) -> str:
+    return hashlib.sha256(senha.encode("utf-8")).hexdigest()
+
+def carregar_usuarios():
+    if os.path.exists(USERS_FILE):
+        with open(USERS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+def salvar_usuarios(users):
+    with open(USERS_FILE, "w", encoding="utf-8") as f:
+        json.dump(users, f, indent=2)
+
+def login():
+    users = carregar_usuarios()
+    if not users:
+        falar("Nenhum usuário encontrado. Crie uma conta.")
+        user = input("Novo usuário (digite ou fale): ") or ouvir()
+        senha = input("Nova senha: ")
+        users[user] = hash_senha(senha)
+        salvar_usuarios(users)
+        falar("Usuário criado com sucesso. Reinicie a Aura.")
+        sys.exit()
+
+    tentativas = 3
+    while tentativas > 0:
+        falar("Diga ou digite seu usuário.")
+        user = input("Usuário: ") or ouvir()
+        senha = input("Senha: ")
+
+        if user in users and users[user] == hash_senha(senha):
+            falar(f"Bem-vindo, {user}. Login realizado com sucesso.")
+            return user
+        else:
+            falar("Usuário ou senha incorretos.")
+            tentativas -= 1
+    falar("Muitas tentativas inválidas. Encerrando.")
+    sys.exit()
+
+# ========== DADOS DO USUÁRIO ==========
+def user_file(user, fname):
+    return os.path.join(BASE_DIR, f"{user}_{fname}.json")
+
+def carregar_dados(user, fname, default):
+    path = user_file(user, fname)
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return default
+
+def salvar_dados(user, fname, data):
+    path = user_file(user, fname)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+# ========== MÚSICA ==========
+def abrir_musica(site, musica):
+    site = site.lower()
+    query = musica.strip().replace(" ", "+")
+    if "youtube music" in site:
+        url = f"https://music.youtube.com/search?q={query}"
+        falar(f"Tocando {musica} no YouTube Music")
+    elif "youtube" in site:
+        url = f"https://www.youtube.com/results?search_query={query}"
+        falar(f"Tocando {musica} no YouTube")
+    elif "spotify" in site:
+        url = f"https://open.spotify.com/search/{query}"
+        falar(f"Tocando {musica} no Spotify")
+    elif "deezer" in site:
+        url = f"https://www.deezer.com/search/{query}"
+        falar(f"Tocando {musica} no Deezer")
+    else:
+        url = f"https://www.youtube.com/results?search_query={query}"
+        falar(f"Não conheço {site}, então vou abrir no YouTube")
+    webbrowser.open(url)
+
+# ========== TIMER ==========
+timers = {}
+
+def iniciar_timer(user, segundos, descricao="timer"):
+    falar(f"Iniciando {descricao} de {segundos} segundos.")
+
+    def contar():
+        time.sleep(segundos)
+        falar(f"O {descricao} terminou!")
+
+    t = threading.Thread(target=contar)
+    t.start()
+    timers[descricao] = t
+
+# ========== NÚCLEO ==========
+def interpretar(user, comando):
+    comando = comando.lower()
+
+    # Música
+    if comando.startswith("abrir ") and " música " in comando:
+        partes = comando.split("música", 1)
+        site = partes[0].replace("abrir", "").strip()
+        musica = partes[1].strip()
+        abrir_musica(site, musica)
+
+    # Timer
+    elif comando.startswith("timer"):
+        # ex: "timer de 2 minutos"
+        palavras = comando.split()
+        segundos = 0
+        if "segundo" in comando:
+            for p in palavras:
+                if p.isdigit():
+                    segundos = int(p)
+                    break
+        elif "minuto" in comando:
+            for p in palavras:
+                if p.isdigit():
+                    segundos = int(p) * 60
+                    break
+        elif "hora" in comando:
+            for p in palavras:
+                if p.isdigit():
+                    segundos = int(p) * 3600
+                    break
+        if segundos > 0:
+            iniciar_timer(user, segundos, "timer")
+        else:
+            falar("Não entendi o tempo do timer.")
+
+    elif "sair" in comando or "encerrar" in comando:
+        falar("Encerrando, até logo!")
+        sys.exit()
+
+    else:
+        falar("Ainda não sei fazer isso.")
+
+# ========== MAIN ==========
+if __name__ == "__main__":
+    usuario_atual = login()
+    falar(f"Aura iniciada. Usuário {usuario_atual}, pronta para ajudar.")
+
+    while True:
+        comando = input("Você: ") or ouvir()
+        if comando.strip():
+            interpretar(usuario_atual, comando)
